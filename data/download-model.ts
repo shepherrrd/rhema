@@ -14,46 +14,58 @@
  */
 
 import { join } from "node:path"
-import {
-  ensurePythonEnv,
-  getVenvBin,
-  PROJECT_ROOT,
-} from "./lib/python-env"
+import { existsSync } from "node:fs"
 
-const MODELS_DIR = join(PROJECT_ROOT, "models", "qwen3-embedding-0.6b")
-const MODELS_DIR_INT8 = join(
-  PROJECT_ROOT,
-  "models",
-  "qwen3-embedding-0.6b-int8"
-)
+const MODELS_DIR = join(import.meta.dir, "..", "models", "qwen3-embedding-0.6b")
+const MODELS_DIR_INT8 = join(import.meta.dir, "..", "models", "qwen3-embedding-0.6b-int8")
+const VENV_PYTHON = join(import.meta.dir, "..", ".venv", "bin", "python3")
 
 async function main() {
-  // --- Phase 1: Python environment setup ---
-  await ensurePythonEnv([
-    "optimum-onnx[onnxruntime]",
-    "sentence-transformers",
-    "accelerate",
-  ])
+  // Check if venv exists
+  if (!existsSync(VENV_PYTHON)) {
+    console.error("\n❌ Virtual environment not found at .venv/")
+    console.error("   Please create one first:")
+    console.error("   python3 -m venv .venv")
+    console.error("   source .venv/bin/activate")
+    console.error("   pip install optimum-onnx onnx onnxruntime")
+    process.exit(1)
+  }
 
-  // --- Phase 2: Export model ---
-  const optimumCli = getVenvBin("optimum-cli")
+  // Install dependencies first
+  console.log("\n📦 Installing Python dependencies in venv...\n")
+  const installProc = Bun.spawn(
+    [
+      VENV_PYTHON,
+      "-m",
+      "pip",
+      "install",
+      "--quiet",
+      "optimum[exporters,onnxruntime]",
+      "onnx",
+      "onnxruntime",
+    ],
+    {
+      stdout: "inherit",
+      stderr: "inherit",
+    }
+  )
 
-  console.log(
-    "\n🧠 Exporting Qwen3-Embedding-0.6B to ONNX (feature-extraction)...\n"
-  )
-  console.log(
-    "  This downloads the model from HuggingFace and converts it to ONNX format."
-  )
-  console.log(
-    "  The export uses --task feature-extraction to avoid KV cache inputs."
-  )
+  const installExitCode = await installProc.exited
+  if (installExitCode !== 0) {
+    console.error("\n❌ Failed to install dependencies")
+    process.exit(1)
+  }
+
+  console.log("\n🧠 Exporting Qwen3-Embedding-0.6B to ONNX (feature-extraction)...\n")
+  console.log("  This downloads the model from HuggingFace and converts it to ONNX format.")
+  console.log("  The export uses --task feature-extraction to avoid KV cache inputs.")
   console.log("  This may take a few minutes on first run.\n")
 
   const proc = Bun.spawn(
     [
-      optimumCli,
-      "export",
-      "onnx",
+      VENV_PYTHON,
+      "-m",
+      "optimum.exporters.onnx",
       "--model",
       "Qwen/Qwen3-Embedding-0.6B",
       "--task",
@@ -68,7 +80,7 @@ async function main() {
 
   const exitCode = await proc.exited
   if (exitCode !== 0) {
-    console.error("\n❌ Export failed.")
+    console.error("\n❌ Export failed. Check the error messages above.")
     process.exit(1)
   }
 
@@ -81,13 +93,15 @@ async function main() {
 
   const quantizeProc = Bun.spawn(
     [
-      optimumCli,
-      "onnxruntime",
-      "quantize",
-      "--onnx_model",
+      VENV_PYTHON,
+      "-m",
+      "optimum.exporters.onnx",
+      "--model",
       MODELS_DIR,
-      "--arm64",
-      "-o",
+      "--optimize",
+      "O2",
+      "--quantize",
+      "arm64",
       MODELS_DIR_INT8,
     ],
     {
