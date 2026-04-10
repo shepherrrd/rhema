@@ -157,15 +157,17 @@ fn try_colon_pattern(tokens: &[Token], book_match: &BookMatch) -> Option<VerseRe
 /// Try to parse "chapter N verse M" pattern.
 /// Handles filler words between chapter and verse:
 /// "chapter six we will be reading from verse 10 to verse 16" → 6:10-16
+/// Also handles: "let's go to chapter 3 verse 2 to verse 3" → 3:2-3
 fn try_chapter_verse_spoken(tokens: &[Token], book_match: &BookMatch) -> Option<VerseRef> {
     for i in 0..tokens.len() {
         if let Token::Word(w) = &tokens[i] {
             if w == "chapter" {
                 // Next token(s) should be a number (digit or spoken)
                 if let Some((chapter, next_idx)) = consume_number(tokens, i + 1) {
-                    // Scan forward (up to 12 tokens) looking for "verse" keyword.
-                    // Real speech often has filler: "chapter six we will be reading from verse 10"
-                    let scan_limit = (next_idx + 12).min(tokens.len());
+                    // Scan forward (up to 15 tokens) looking for "verse" keyword.
+                    // Extended from 12 to 15 to handle longer phrases like:
+                    // "let's go to chapter 3 verse 2 to verse 3"
+                    let scan_limit = (next_idx + 15).min(tokens.len());
                     for j in next_idx..scan_limit {
                         if let Token::Word(vw) = &tokens[j] {
                             if vw == "verse" || vw == "verses" {
@@ -607,5 +609,27 @@ mod tests {
         let result = parse_reference(text, &bm).unwrap();
         assert_eq!(result.chapter, 8);
         assert_eq!(result.verse_start, 28);
+    }
+
+    #[test]
+    fn test_lets_go_to_with_range() {
+        // Issue: "let's go to Genesis 3 verse 2 to verse 3"
+        let bm = make_book_match("Genesis", 1, 7);
+        let text = "Genesis let's go to chapter 3 verse 2 to verse 3";
+        let result = parse_reference(text, &bm).unwrap();
+        assert_eq!(result.chapter, 3);
+        assert_eq!(result.verse_start, 2);
+        assert_eq!(result.verse_end, Some(3));
+    }
+
+    #[test]
+    fn test_genesis_without_chapter_keyword() {
+        // Direct pattern: "Genesis 3 verse 2 to verse 3"
+        let bm = make_book_match("Genesis", 1, 7);
+        let text = "Genesis 3 verse 2 to verse 3";
+        let result = parse_reference(text, &bm).unwrap();
+        assert_eq!(result.chapter, 3);
+        assert_eq!(result.verse_start, 2);
+        assert_eq!(result.verse_end, Some(3));
     }
 }
