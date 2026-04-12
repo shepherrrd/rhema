@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core"
 // Using native overflow-y-auto instead of Radix ScrollArea for reliable scrolling in flex layouts
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
+import { getAutocompleteSuggestion, getTabNavigationResult } from "@/lib/quick-search"
 import {
   Select,
   SelectContent,
@@ -364,102 +365,18 @@ export function SearchPanel() {
 
   // EasyWorship-style autocomplete logic
   useEffect(() => {
-    const trimmed = quickInput.trim()
+    const result = getAutocompleteSuggestion(quickInput, books)
 
-    if (!trimmed) {
-      setQuickSuggestion("")
-      setShowQuickVerses(false)
-      return
-    }
+    // Set suggestion
+    setQuickSuggestion(result.suggestion)
 
-    // Convert number to Roman numeral for matching
-    const numberToRoman = (num: number): string => {
-      if (num === 1) return "I"
-      if (num === 2) return "II"
-      if (num === 3) return "III"
-      return String(num)
-    }
-
-    // Normalize input: convert leading numbers to Roman numerals for matching
-    // "1 S" -> "I S", "2 C" -> "II C", "3 J" -> "III J"
-    let normalizedInput = trimmed
-    const leadingNumberMatch = trimmed.match(/^(\d+)\s*(.*)$/)
-    if (leadingNumberMatch) {
-      const num = parseInt(leadingNumberMatch[1])
-      const rest = leadingNumberMatch[2]
-      normalizedInput = numberToRoman(num) + (rest ? " " + rest : "")
-    }
-
-    // Check if it's just a number (for numbered books like "1", "2", "3")
-    if (/^\d+$/.test(trimmed)) {
-      // Find first book starting with this Roman numeral
-      const matchingBook = books.find(b => b.name.startsWith(normalizedInput + " "))
-
-      if (matchingBook) {
-        const remainder = matchingBook.name.slice(normalizedInput.length)
-        setQuickSuggestion(normalizedInput + remainder + " 1:1")
-        setShowQuickVerses(false)
-
-        // Navigate to verse 1:1 for preview
-        useBibleStore.getState().setPendingNavigation({
-          bookNumber: matchingBook.book_number,
-          chapter: 1,
-          verse: 1
-        })
-
-        // Keep focus on input
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => {
-            if (quickInputRef.current && document.activeElement !== quickInputRef.current) {
-              quickInputRef.current.focus()
-            }
-          })
-        })
-        return
-      }
-    }
-
-    // Parse: "NumberedBook Chapter:Verse" or "BookName Chapter:Verse"
-    // Use normalized input for matching (Roman numerals converted)
-    // Match patterns like: "I J", "I John", "John", "John 3", "John 3:16"
-    const match = normalizedInput.match(/^([IVX]+\s+[a-zA-Z]+|[IVX]+\s+[a-zA-Z\s]+|[a-zA-Z\s]+?)\s*(\d+)?:?(\d+)?$/)
-
-    if (!match) {
-      setQuickSuggestion("")
-      setShowQuickVerses(false)
-      return
-    }
-
-    const bookInput = match[1].trim().toLowerCase()
-    const chapterNum = match[2]
-    const verseNum = match[3]
-
-    // Find matching book (support numbered books with Roman numerals)
-    const matchingBook = books.find(
-      b =>
-        b.name.toLowerCase().startsWith(bookInput) ||
-        b.abbreviation.toLowerCase().startsWith(bookInput)
-    )
-
-    if (!matchingBook) {
-      setQuickSuggestion("")
-      setShowQuickVerses(false)
-      return
-    }
-
-    // Stage 1: Autocomplete book name + suggest 1:1
-    if (!chapterNum) {
-      // Use the actual matched book name (not the user's input)
-      // This ensures "1 j" suggests "I John 1:1" (not "1 j ohn 1:1")
-      const newSuggestion = matchingBook.name + " 1:1"
-      setQuickSuggestion(newSuggestion)
-      setShowQuickVerses(false)
-
-      // Load chapter 1 and navigate to verse 1 immediately for preview
+    // Handle navigation and verse loading based on stage
+    if (result.matchedBook && result.chapter && result.verse) {
+      // Navigate to the verse for preview
       useBibleStore.getState().setPendingNavigation({
-        bookNumber: matchingBook.book_number,
-        chapter: 1,
-        verse: 1
+        bookNumber: result.matchedBook.book_number,
+        chapter: result.chapter,
+        verse: result.verse
       })
 
       // Keep focus on input
@@ -470,89 +387,29 @@ export function SearchPanel() {
           }
         })
       })
-      return
     }
 
-    // Stage 2: Suggest colon after chapter
-    const chapter = parseInt(chapterNum)
-    if (!verseNum && !trimmed.includes(':')) {
-      setQuickSuggestion(trimmed + ":1")
-
-      // Load verses for dropdown
+    // Load verses for dropdown when at chapter stage
+    if (result.stage === "chapter" && result.matchedBook && result.chapter) {
       invoke<Verse[]>("get_chapter", {
         translationId: activeTranslationId,
-        bookNumber: matchingBook.book_number,
-        chapter
+        bookNumber: result.matchedBook.book_number,
+        chapter: result.chapter
       }).then(verses => {
         setQuickVersesList(verses)
         setShowQuickVerses(true)
-
-        // Navigate to first verse for preview
-        if (verses.length > 0) {
-          useBibleStore.getState().setPendingNavigation({
-            bookNumber: matchingBook.book_number,
-            chapter,
-            verse: 1
-          })
-        }
-
-        // Keep focus on input
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => {
-            if (quickInputRef.current && document.activeElement !== quickInputRef.current) {
-              quickInputRef.current.focus()
-            }
-          })
-        })
       }).catch(console.error)
-      return
-    }
-
-    // Stage 3: Show verse dropdown and navigate to typed verse
-    if (!verseNum && trimmed.includes(':')) {
-      setQuickSuggestion("")
+    } else if (result.stage === "verse" && result.matchedBook && result.chapter) {
+      // Show verse dropdown when colon is typed
       invoke<Verse[]>("get_chapter", {
         translationId: activeTranslationId,
-        bookNumber: matchingBook.book_number,
-        chapter
+        bookNumber: result.matchedBook.book_number,
+        chapter: result.chapter
       }).then(verses => {
         setQuickVersesList(verses)
         setShowQuickVerses(true)
-
-        // Navigate to first verse for preview
-        if (verses.length > 0) {
-          useBibleStore.getState().setPendingNavigation({
-            bookNumber: matchingBook.book_number,
-            chapter,
-            verse: 1
-          })
-        }
-
-        // Keep focus on input
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => {
-            if (quickInputRef.current && document.activeElement !== quickInputRef.current) {
-              quickInputRef.current.focus()
-            }
-          })
-        })
       }).catch(console.error)
-    } else if (verseNum) {
-      setQuickSuggestion("")
-      setShowQuickVerses(false)
-
-      // Navigate to the typed verse for preview
-      const verse = parseInt(verseNum)
-      useBibleStore.getState().setPendingNavigation({
-        bookNumber: matchingBook.book_number,
-        chapter,
-        verse
-      })
-
-      // Keep focus on input
-      setTimeout(() => quickInputRef.current?.focus(), 0)
     } else {
-      setQuickSuggestion("")
       setShowQuickVerses(false)
     }
   }, [quickInput, books, activeTranslationId])
@@ -561,53 +418,8 @@ export function SearchPanel() {
     // Tab or → accepts suggestion and advances to NEXT STAGE
     if ((e.key === "Tab" || e.key === "ArrowRight") && quickSuggestion && quickSuggestion !== quickInput) {
       e.preventDefault()
-
-      // Parse current input to determine what stage we're at
-      const currentTrimmed = quickInput.trim()
-      const suggestionTrimmed = quickSuggestion.trim()
-
-      // Extract the full book name from the suggestion
-      const bookNameMatch = suggestionTrimmed.match(/^(([IVX]+\s+)?[a-zA-Z\s]+)\s+\d+:\d+$/)
-
-      if (bookNameMatch) {
-        const fullBookName = bookNameMatch[1]
-
-        // Check if current input matches the COMPLETE book name
-        // "I John " (with trailing space) → complete book name, ready for chapter
-        // "1 J" or "I J" → incomplete book name, still typing
-        const currentIsCompleteBookName = currentTrimmed === fullBookName + " " ||
-                                          currentTrimmed === fullBookName
-
-        // Check if current input has a chapter number AFTER the complete book name
-        // "I John 3" → has chapter
-        // "John 3" → has chapter
-        const hasChapter = new RegExp(`^${fullBookName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s+\\d+`, 'i').test(currentTrimmed) &&
-                          !currentTrimmed.includes(':')
-
-        // Stage 1: Currently typing book name (not complete yet)
-        // Example: "j" → suggestion is "Joshua 1:1"
-        // Example: "1 J" → suggestion is "I John 1:1" (book name not complete)
-        // Advance to: "Joshua " or "I John " (ready to type chapter)
-        if (!currentIsCompleteBookName && !hasChapter) {
-          setQuickInput(fullBookName + " ")
-          return
-        }
-
-        // Stage 2: Currently typing book + chapter (has chapter number but no colon)
-        // Example: "John 3" → suggestion is "John 3:1"
-        // Example: "I John 10" → suggestion is "I John 10:1"
-        // Advance to: "John 3:" or "I John 10:" (ready to type verse)
-        if (hasChapter) {
-          const chapterMatch = suggestionTrimmed.match(/^(([IVX]+\s+)?[a-zA-Z\s]+\s+\d+):\d+$/)
-          if (chapterMatch) {
-            setQuickInput(chapterMatch[1] + ":")
-            return
-          }
-        }
-      }
-
-      // Default: accept full suggestion
-      setQuickInput(quickSuggestion)
+      const nextInput = getTabNavigationResult(quickInput, quickSuggestion)
+      setQuickInput(nextInput)
       return
     }
 
@@ -628,7 +440,7 @@ export function SearchPanel() {
       setShowQuickVerses(false)
       return
     }
-  }, [quickInput, quickSuggestion, books])
+  }, [quickInput, quickSuggestion])
 
   const handleQuickVerseClick = useCallback((verse: Verse) => {
     useBibleStore.getState().setPendingNavigation({
