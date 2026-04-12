@@ -690,10 +690,10 @@ export function SearchPanel() {
             <div className="relative flex-1">
               {/* Suggestion overlay */}
               {quickSuggestion && quickSuggestion !== quickInput && (
-                <div className="absolute inset-0 flex items-center px-3 pointer-events-none">
-                  <span className="text-xs">
+                <div className="absolute inset-0 flex items-center px-3 pointer-events-none z-10">
+                  <span className="text-xs font-normal">
                     <span className="text-foreground">{quickInput}</span>
-                    <span className="text-muted-foreground/40">{quickSuggestion.slice(quickInput.length)}</span>
+                    <span className="text-gray-500 dark:text-gray-400">{quickSuggestion.slice(quickInput.length)}</span>
                   </span>
                 </div>
               )}
