@@ -91,7 +91,6 @@ Rhema supports two speech-to-text engines:
 
 **Option 1: Whisper (Local, Free)**
 No setup required! Whisper runs locally on your machine with no API costs or internet dependency.
-- See the [Whisper setup guide](Documentation/whisper.md) for requirements and usage
 - Requires CMake: `brew install cmake`
 - Model downloads automatically on first use
 

@@ -83,7 +83,15 @@ export function SearchPanel() {
   const [selectedVerseId, setSelectedVerseId] = useState<number | null>(null)
   const [chapterInput, setChapterInput] = useState("")
   const [contextQuery, setContextQuery] = useState("")
+
+  // EasyWorship-style autocomplete
+  const [quickInput, setQuickInput] = useState("")
+  const [quickSuggestion, setQuickSuggestion] = useState("")
+  const [showQuickVerses, setShowQuickVerses] = useState(false)
+  const [quickVersesList, setQuickVersesList] = useState<Verse[]>([])
+
   const chapterInputRef = useRef<HTMLInputElement>(null)
+  const quickInputRef = useRef<HTMLInputElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
 
   const {
@@ -354,6 +362,277 @@ export function SearchPanel() {
     }
   }, [])
 
+  // EasyWorship-style autocomplete logic
+  useEffect(() => {
+    const trimmed = quickInput.trim()
+
+    if (!trimmed) {
+      setQuickSuggestion("")
+      setShowQuickVerses(false)
+      return
+    }
+
+    // Convert number to Roman numeral for matching
+    const numberToRoman = (num: number): string => {
+      if (num === 1) return "I"
+      if (num === 2) return "II"
+      if (num === 3) return "III"
+      return String(num)
+    }
+
+    // Normalize input: convert leading numbers to Roman numerals for matching
+    // "1 S" -> "I S", "2 C" -> "II C", "3 J" -> "III J"
+    let normalizedInput = trimmed
+    const leadingNumberMatch = trimmed.match(/^(\d+)\s*(.*)$/)
+    if (leadingNumberMatch) {
+      const num = parseInt(leadingNumberMatch[1])
+      const rest = leadingNumberMatch[2]
+      normalizedInput = numberToRoman(num) + (rest ? " " + rest : "")
+    }
+
+    // Check if it's just a number (for numbered books like "1", "2", "3")
+    if (/^\d+$/.test(trimmed)) {
+      // Find first book starting with this Roman numeral
+      const matchingBook = books.find(b => b.name.startsWith(normalizedInput + " "))
+
+      if (matchingBook) {
+        const remainder = matchingBook.name.slice(normalizedInput.length)
+        setQuickSuggestion(normalizedInput + remainder + " 1:1")
+        setShowQuickVerses(false)
+
+        // Navigate to verse 1:1 for preview
+        useBibleStore.getState().setPendingNavigation({
+          bookNumber: matchingBook.book_number,
+          chapter: 1,
+          verse: 1
+        })
+
+        // Keep focus on input
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            if (quickInputRef.current && document.activeElement !== quickInputRef.current) {
+              quickInputRef.current.focus()
+            }
+          })
+        })
+        return
+      }
+    }
+
+    // Parse: "NumberedBook Chapter:Verse" or "BookName Chapter:Verse"
+    // Use normalized input for matching (Roman numerals converted)
+    // Match patterns like: "I J", "I John", "John", "John 3", "John 3:16"
+    const match = normalizedInput.match(/^([IVX]+\s+[a-zA-Z]+|[IVX]+\s+[a-zA-Z\s]+|[a-zA-Z\s]+?)\s*(\d+)?:?(\d+)?$/)
+
+    if (!match) {
+      setQuickSuggestion("")
+      setShowQuickVerses(false)
+      return
+    }
+
+    const bookInput = match[1].trim().toLowerCase()
+    const chapterNum = match[2]
+    const verseNum = match[3]
+
+    // Find matching book (support numbered books with Roman numerals)
+    const matchingBook = books.find(
+      b =>
+        b.name.toLowerCase().startsWith(bookInput) ||
+        b.abbreviation.toLowerCase().startsWith(bookInput)
+    )
+
+    if (!matchingBook) {
+      setQuickSuggestion("")
+      setShowQuickVerses(false)
+      return
+    }
+
+    // Stage 1: Autocomplete book name + suggest 1:1
+    if (!chapterNum) {
+      const matchLength = bookInput.length
+      const remainder = matchingBook.name.slice(matchLength)
+      const newSuggestion = trimmed + remainder + " 1:1"
+      setQuickSuggestion(newSuggestion)
+      setShowQuickVerses(false)
+
+      // Load chapter 1 and navigate to verse 1 immediately for preview
+      useBibleStore.getState().setPendingNavigation({
+        bookNumber: matchingBook.book_number,
+        chapter: 1,
+        verse: 1
+      })
+
+      // Keep focus on input
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          if (quickInputRef.current && document.activeElement !== quickInputRef.current) {
+            quickInputRef.current.focus()
+          }
+        })
+      })
+      return
+    }
+
+    // Stage 2: Suggest colon after chapter
+    const chapter = parseInt(chapterNum)
+    if (!verseNum && !trimmed.includes(':')) {
+      setQuickSuggestion(trimmed + ":1")
+
+      // Load verses for dropdown
+      invoke<Verse[]>("get_chapter", {
+        translationId: activeTranslationId,
+        bookNumber: matchingBook.book_number,
+        chapter
+      }).then(verses => {
+        setQuickVersesList(verses)
+        setShowQuickVerses(true)
+
+        // Navigate to first verse for preview
+        if (verses.length > 0) {
+          useBibleStore.getState().setPendingNavigation({
+            bookNumber: matchingBook.book_number,
+            chapter,
+            verse: 1
+          })
+        }
+
+        // Keep focus on input
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            if (quickInputRef.current && document.activeElement !== quickInputRef.current) {
+              quickInputRef.current.focus()
+            }
+          })
+        })
+      }).catch(console.error)
+      return
+    }
+
+    // Stage 3: Show verse dropdown and navigate to typed verse
+    if (!verseNum && trimmed.includes(':')) {
+      setQuickSuggestion("")
+      invoke<Verse[]>("get_chapter", {
+        translationId: activeTranslationId,
+        bookNumber: matchingBook.book_number,
+        chapter
+      }).then(verses => {
+        setQuickVersesList(verses)
+        setShowQuickVerses(true)
+
+        // Navigate to first verse for preview
+        if (verses.length > 0) {
+          useBibleStore.getState().setPendingNavigation({
+            bookNumber: matchingBook.book_number,
+            chapter,
+            verse: 1
+          })
+        }
+
+        // Keep focus on input
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            if (quickInputRef.current && document.activeElement !== quickInputRef.current) {
+              quickInputRef.current.focus()
+            }
+          })
+        })
+      }).catch(console.error)
+    } else if (verseNum) {
+      setQuickSuggestion("")
+      setShowQuickVerses(false)
+
+      // Navigate to the typed verse for preview
+      const verse = parseInt(verseNum)
+      useBibleStore.getState().setPendingNavigation({
+        bookNumber: matchingBook.book_number,
+        chapter,
+        verse
+      })
+
+      // Keep focus on input
+      setTimeout(() => quickInputRef.current?.focus(), 0)
+    } else {
+      setQuickSuggestion("")
+      setShowQuickVerses(false)
+    }
+  }, [quickInput, books, activeTranslationId])
+
+  const handleQuickKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
+    // Tab or → accepts suggestion and advances to NEXT STAGE
+    if ((e.key === "Tab" || e.key === "ArrowRight") && quickSuggestion && quickSuggestion !== quickInput) {
+      e.preventDefault()
+
+      // Parse current input to determine what stage we're at
+      const currentTrimmed = quickInput.trim()
+      const suggestionTrimmed = quickSuggestion.trim()
+
+      // Check if current input has a chapter number (Arabic digit AFTER the book name)
+      // Examples:
+      // "Joshua 3" → has chapter
+      // "I Samuel 3" → has chapter
+      // "I Samuel " → NO chapter (just book name)
+      // "1 J" or "I J" → NO chapter (still typing book name)
+      const hasChapter = /^([IVX]+\s+)?[a-zA-Z\s]+\s+\d+/.test(currentTrimmed) && !currentTrimmed.includes(':')
+
+      // Stage 1: Currently typing just book name (no chapter number yet)
+      // Example: "j" → suggestion is "Joshua 1:1"
+      // Example: "I Samuel " → suggestion is "I Samuel 1:1"
+      // Advance to: "Joshua " or "I Samuel " (ready to type chapter)
+      if (!hasChapter) {
+        const bookNameMatch = suggestionTrimmed.match(/^(([IVX]+\s+)?[a-zA-Z\s]+)\s+\d+:\d+$/)
+        if (bookNameMatch) {
+          setQuickInput(bookNameMatch[1] + " ")
+          return
+        }
+      }
+
+      // Stage 2: Currently typing book + chapter (has chapter number but no colon)
+      // Example: "John 3" → suggestion is "John 3:1"
+      // Example: "I Samuel 10" → suggestion is "I Samuel 10:1"
+      // Advance to: "John 3:" or "I Samuel 10:" (ready to type verse)
+      if (hasChapter) {
+        const chapterMatch = suggestionTrimmed.match(/^(([IVX]+\s+)?[a-zA-Z\s]+\s+\d+):\d+$/)
+        if (chapterMatch) {
+          setQuickInput(chapterMatch[1] + ":")
+          return
+        }
+      }
+
+      // Default: accept full suggestion
+      setQuickInput(quickSuggestion)
+      return
+    }
+
+    // Enter clears input (verse is already showing in panel)
+    if (e.key === "Enter") {
+      e.preventDefault()
+      setQuickInput("")
+      setQuickSuggestion("")
+      setShowQuickVerses(false)
+      return
+    }
+
+    // Escape clears
+    if (e.key === "Escape") {
+      e.preventDefault()
+      setQuickInput("")
+      setQuickSuggestion("")
+      setShowQuickVerses(false)
+      return
+    }
+  }, [quickInput, quickSuggestion, books])
+
+  const handleQuickVerseClick = useCallback((verse: Verse) => {
+    useBibleStore.getState().setPendingNavigation({
+      bookNumber: verse.book_number,
+      chapter: verse.chapter,
+      verse: verse.verse
+    })
+    setQuickInput("")
+    setQuickSuggestion("")
+    setShowQuickVerses(false)
+  }, [])
+
   return (
     <div
       ref={panelRef}
@@ -399,55 +678,57 @@ export function SearchPanel() {
 
         {activeTab === "book" ? (
           <div className="flex flex-1 items-center gap-2 pr-3">
-            {/* Book combobox */}
-            <Popover open={bookOpen} onOpenChange={setBookOpen}>
-              <PopoverTrigger asChild>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-7 min-w-[140px] justify-start gap-1.5 text-xs font-normal"
-                >
-                  <SearchIcon className="size-3 shrink-0 text-muted-foreground" />
-                  {selectedBook ? selectedBook.name : "Select book..."}
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-[240px] p-0" align="start">
-                <Command>
-                  <CommandInput placeholder="Search books..." className="h-8 text-xs" />
-                  <CommandList>
-                    <CommandEmpty>No book found.</CommandEmpty>
-                    <CommandGroup>
-                      {books.map((book) => (
-                        <CommandItem
-                          key={book.id}
-                          value={`${book.name} ${book.abbreviation}`}
-                          onSelect={() => handleBookSelect(book)}
-                          className="text-xs"
-                        >
-                          <span className="w-5 shrink-0 text-right text-muted-foreground">
-                            {book.book_number}
-                          </span>
-                          <span className="flex-1">{book.name}</span>
-                          <Badge variant="outline" className="text-[0.5rem] opacity-50">
-                            {book.testament}
-                          </Badge>
-                        </CommandItem>
-                      ))}
-                    </CommandGroup>
-                  </CommandList>
-                </Command>
-              </PopoverContent>
-            </Popover>
+            {/* EasyWorship-style autocomplete */}
+            <div className="relative flex-1">
+              {/* Suggestion overlay */}
+              {quickSuggestion && quickSuggestion !== quickInput && (
+                <div className="absolute inset-0 flex items-center px-3 pointer-events-none">
+                  <span className="text-xs">
+                    <span className="text-foreground">{quickInput}</span>
+                    <span className="text-muted-foreground/40">{quickSuggestion.slice(quickInput.length)}</span>
+                  </span>
+                </div>
+              )}
 
-            {/* Chapter:Verse input */}
-            <Input
-              ref={chapterInputRef}
-              placeholder={selectedBook ? "ch:verse" : ""}
-              value={chapterInput}
-              onChange={(e) => handleChapterInput(e.target.value)}
-              disabled={!selectedBook}
-              className="h-7 w-20 text-xs"
-            />
+              {/* Actual input */}
+              <Input
+                ref={quickInputRef}
+                data-tour="quick-nav"
+                value={quickInput}
+                onChange={(e) => setQuickInput(e.target.value)}
+                onKeyDown={handleQuickKeyDown}
+                placeholder="Type: J → John 3:16"
+                className={cn(
+                  "h-7 text-xs relative bg-background",
+                  quickSuggestion && quickSuggestion !== quickInput ? "text-transparent" : ""
+                )}
+                style={quickSuggestion && quickSuggestion !== quickInput ? {
+                  caretColor: 'var(--foreground)'
+                } : undefined}
+              />
+
+              {/* Verse dropdown */}
+              {showQuickVerses && quickVersesList.length > 0 && (
+                <div className="absolute top-full left-0 right-0 mt-1 z-50 max-h-64 overflow-y-auto rounded-md border border-border bg-popover shadow-lg">
+                  <div className="p-1">
+                    {quickVersesList.map((verse) => (
+                      <button
+                        key={verse.id}
+                        onClick={() => handleQuickVerseClick(verse)}
+                        className="flex w-full items-start gap-2 rounded-sm px-2 py-1.5 text-left text-xs hover:bg-accent hover:text-accent-foreground"
+                      >
+                        <span className="shrink-0 font-semibold text-primary w-6 text-right">
+                          {verse.verse}
+                        </span>
+                        <span className="flex-1 text-muted-foreground line-clamp-1">
+                          {verse.text}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
 
             <Select
               value={String(activeTranslationId)}
