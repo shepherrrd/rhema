@@ -449,9 +449,9 @@ export function SearchPanel() {
 
     // Stage 1: Autocomplete book name + suggest 1:1
     if (!chapterNum) {
-      const matchLength = bookInput.length
-      const remainder = matchingBook.name.slice(matchLength)
-      const newSuggestion = trimmed + remainder + " 1:1"
+      // Use the actual matched book name (not the user's input)
+      // This ensures "1 j" suggests "I John 1:1" (not "1 j ohn 1:1")
+      const newSuggestion = matchingBook.name + " 1:1"
       setQuickSuggestion(newSuggestion)
       setShowQuickVerses(false)
 
@@ -566,35 +566,43 @@ export function SearchPanel() {
       const currentTrimmed = quickInput.trim()
       const suggestionTrimmed = quickSuggestion.trim()
 
-      // Check if current input has a chapter number (Arabic digit AFTER the book name)
-      // Examples:
-      // "Joshua 3" → has chapter
-      // "I Samuel 3" → has chapter
-      // "I Samuel " → NO chapter (just book name)
-      // "1 J" or "I J" → NO chapter (still typing book name)
-      const hasChapter = /^([IVX]+\s+)?[a-zA-Z\s]+\s+\d+/.test(currentTrimmed) && !currentTrimmed.includes(':')
+      // Extract the full book name from the suggestion
+      const bookNameMatch = suggestionTrimmed.match(/^(([IVX]+\s+)?[a-zA-Z\s]+)\s+\d+:\d+$/)
 
-      // Stage 1: Currently typing just book name (no chapter number yet)
-      // Example: "j" → suggestion is "Joshua 1:1"
-      // Example: "I Samuel " → suggestion is "I Samuel 1:1"
-      // Advance to: "Joshua " or "I Samuel " (ready to type chapter)
-      if (!hasChapter) {
-        const bookNameMatch = suggestionTrimmed.match(/^(([IVX]+\s+)?[a-zA-Z\s]+)\s+\d+:\d+$/)
-        if (bookNameMatch) {
-          setQuickInput(bookNameMatch[1] + " ")
+      if (bookNameMatch) {
+        const fullBookName = bookNameMatch[1]
+
+        // Check if current input matches the COMPLETE book name
+        // "I John " (with trailing space) → complete book name, ready for chapter
+        // "1 J" or "I J" → incomplete book name, still typing
+        const currentIsCompleteBookName = currentTrimmed === fullBookName + " " ||
+                                          currentTrimmed === fullBookName
+
+        // Check if current input has a chapter number AFTER the complete book name
+        // "I John 3" → has chapter
+        // "John 3" → has chapter
+        const hasChapter = new RegExp(`^${fullBookName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s+\\d+`, 'i').test(currentTrimmed) &&
+                          !currentTrimmed.includes(':')
+
+        // Stage 1: Currently typing book name (not complete yet)
+        // Example: "j" → suggestion is "Joshua 1:1"
+        // Example: "1 J" → suggestion is "I John 1:1" (book name not complete)
+        // Advance to: "Joshua " or "I John " (ready to type chapter)
+        if (!currentIsCompleteBookName && !hasChapter) {
+          setQuickInput(fullBookName + " ")
           return
         }
-      }
 
-      // Stage 2: Currently typing book + chapter (has chapter number but no colon)
-      // Example: "John 3" → suggestion is "John 3:1"
-      // Example: "I Samuel 10" → suggestion is "I Samuel 10:1"
-      // Advance to: "John 3:" or "I Samuel 10:" (ready to type verse)
-      if (hasChapter) {
-        const chapterMatch = suggestionTrimmed.match(/^(([IVX]+\s+)?[a-zA-Z\s]+\s+\d+):\d+$/)
-        if (chapterMatch) {
-          setQuickInput(chapterMatch[1] + ":")
-          return
+        // Stage 2: Currently typing book + chapter (has chapter number but no colon)
+        // Example: "John 3" → suggestion is "John 3:1"
+        // Example: "I John 10" → suggestion is "I John 10:1"
+        // Advance to: "John 3:" or "I John 10:" (ready to type verse)
+        if (hasChapter) {
+          const chapterMatch = suggestionTrimmed.match(/^(([IVX]+\s+)?[a-zA-Z\s]+\s+\d+):\d+$/)
+          if (chapterMatch) {
+            setQuickInput(chapterMatch[1] + ":")
+            return
+          }
         }
       }
 
