@@ -212,17 +212,7 @@ rhema/
 
 ## Security
 
-Rhema implements a restrictive **Content Security Policy (CSP)** to protect against script injection attacks and unauthorized data exfiltration. The CSP:
-
-- ✅ Blocks inline scripts and external script loading (`script-src 'self'`)
-- ✅ Whitelists only Deepgram API for network connections
-- ✅ Prevents clickjacking with `frame-src 'none'`
-- ✅ Allows theme background images from HTTPS sources only
-- ✅ Blocks forms from submitting to external sites
-
-For detailed security documentation, including threat model, CSP configuration, and security best practices, see **[SECURITY.md](SECURITY.md)**.
-
-To report security vulnerabilities,please reachout to the maintainer instead of opening public issues.
+Rhema enforces a restrictive Content Security Policy on the Tauri webview to prevent script injection and unauthorized data exfiltration. The policy is defined in `src-tauri/tauri.conf.json`; see **[SECURITY.md](SECURITY.md)** for the directive-by-directive rationale, threat model, and vulnerability reporting process.
 
 ## Environment Variables
 
